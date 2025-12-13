@@ -30,6 +30,11 @@ class MockHttpTransporter implements HttpTransporterInterface
     private ?Response $responseToReturn = null;
 
     /**
+     * @var array<int, string>|null Chunks to yield for streaming.
+     */
+    private ?array $streamChunks = null;
+
+    /**
      * {@inheritDoc}
      */
     public function send(Request $request, ?RequestOptions $options = null): Response
@@ -37,6 +42,29 @@ class MockHttpTransporter implements HttpTransporterInterface
         $this->lastRequest = $request;
         $this->lastOptions = $options;
         return $this->responseToReturn ?? new Response(200, [], '{"status":"success"}');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function streamResponse(Request $request, ?RequestOptions $options = null): \Generator
+    {
+        $this->lastRequest = $request;
+        $this->lastOptions = $options;
+
+        if ($this->streamChunks === null) {
+            if ($this->responseToReturn !== null) {
+                $body = $this->responseToReturn->getBody();
+                if ($body !== null) {
+                    yield $body;
+                }
+            }
+            return;
+        }
+
+        foreach ($this->streamChunks as $chunk) {
+            yield $chunk;
+        }
     }
 
     /**
@@ -67,5 +95,16 @@ class MockHttpTransporter implements HttpTransporterInterface
     public function setResponseToReturn(Response $response): void
     {
         $this->responseToReturn = $response;
+    }
+
+    /**
+     * Sets streaming chunks to yield.
+     *
+     * @param array<int, string> $chunks
+     * @return void
+     */
+    public function setStreamChunks(array $chunks): void
+    {
+        $this->streamChunks = $chunks;
     }
 }

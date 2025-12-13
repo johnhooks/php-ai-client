@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WordPress\AiClient\Providers\Http\Contracts;
 
+use Generator;
 use WordPress\AiClient\Providers\Http\DTO\Request;
 use WordPress\AiClient\Providers\Http\DTO\RequestOptions;
 use WordPress\AiClient\Providers\Http\DTO\Response;
@@ -28,4 +29,18 @@ interface HttpTransporterInterface
      * @return Response The response received.
      */
     public function send(Request $request, ?RequestOptions $options = null): Response;
+
+    /**
+     * Streams an HTTP response and yields raw chunks.
+     *
+     * This is used for providers that return streaming responses (e.g., SSE).
+     * Implementations MUST validate HTTP errors before yielding any chunks.
+     *
+     * @since n.e.x.t
+     *
+     * @param Request $request The request to send.
+     * @param RequestOptions|null $options Optional transport options for the request.
+     * @return Generator<int, string, mixed, void> Generator yielding raw response chunks.
+     */
+    public function streamResponse(Request $request, ?RequestOptions $options = null): Generator;
 }

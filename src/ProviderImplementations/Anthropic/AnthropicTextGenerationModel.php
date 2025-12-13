@@ -6,6 +6,8 @@ namespace WordPress\AiClient\ProviderImplementations\Anthropic;
 
 use WordPress\AiClient\Providers\Http\DTO\Request;
 use WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum;
+use WordPress\AiClient\Providers\Http\Streaming\AnthropicSseParser;
+use WordPress\AiClient\Providers\Http\Streaming\Contracts\SseParserInterface;
 use WordPress\AiClient\Providers\OpenAiCompatibleImplementation\AbstractOpenAiCompatibleTextGenerationModel;
 
 /**
@@ -29,5 +31,15 @@ class AnthropicTextGenerationModel extends AbstractOpenAiCompatibleTextGeneratio
             $data,
             $this->getRequestOptions()
         );
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @since n.e.x.t
+     */
+    protected function createSseParser(): SseParserInterface
+    {
+        return new AnthropicSseParser();
     }
 }

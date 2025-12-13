@@ -17,10 +17,14 @@ use WordPress\AiClient\Providers\Http\DTO\Request;
 use WordPress\AiClient\Providers\Http\DTO\Response;
 use WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum;
 use WordPress\AiClient\Providers\Http\Exception\ResponseException;
+use WordPress\AiClient\Providers\Http\Streaming\Contracts\SseParserInterface;
+use WordPress\AiClient\Providers\Http\Streaming\OpenAiSseParser;
+use WordPress\AiClient\Providers\Http\Streaming\StreamingDeltaAccumulator;
 use WordPress\AiClient\Providers\Http\Util\ResponseUtil;
 use WordPress\AiClient\Providers\Models\TextGeneration\Contracts\TextGenerationModelInterface;
 use WordPress\AiClient\Results\DTO\Candidate;
 use WordPress\AiClient\Results\DTO\GenerativeAiResult;
+use WordPress\AiClient\Results\DTO\StreamingGenerativeAiResult;
 use WordPress\AiClient\Results\DTO\TokenUsage;
 use WordPress\AiClient\Results\Enums\FinishReasonEnum;
 use WordPress\AiClient\Tools\DTO\FunctionCall;
@@ -98,15 +102,53 @@ abstract class AbstractOpenAiCompatibleTextGenerationModel extends AbstractApiBa
      * {@inheritDoc}
      *
      * @since 0.1.0
+     * @since n.e.x.t Added streaming support.
      */
     final public function streamGenerateTextResult(array $prompt): Generator
     {
-        $params = $this->prepareGenerateTextParams($prompt);
+        $httpTransporter = $this->getHttpTransporter();
 
-        // TODO: Implement streaming support.
-        throw new RuntimeException(
-            'Streaming is not yet implemented.'
+        $params = $this->prepareGenerateTextParams($prompt);
+        $params['stream'] = true;
+        $params['stream_options'] = ['include_usage' => true];
+
+        $request = $this->createRequest(
+            HttpMethodEnum::POST(),
+            'chat/completions',
+            ['Content-Type' => 'application/json'],
+            $params
         );
+
+        $request = $this->getRequestAuthentication()->authenticateRequest($request);
+
+        $parser = $this->createSseParser();
+        $accumulator = new StreamingDeltaAccumulator();
+
+        $rawStream = $httpTransporter->streamResponse($request);
+
+        foreach ($parser->parse($rawStream) as $chunk) {
+            $accumulator->addChunk($chunk);
+
+            yield StreamingGenerativeAiResult::fromAccumulator(
+                $accumulator,
+                $this->providerMetadata(),
+                $this->metadata()
+            );
+        }
+    }
+
+    /**
+     * Creates the SSE parser for this provider.
+     *
+     * Subclasses may override this method to return a provider-specific parser.
+     *
+     * @since n.e.x.t
+     *
+     * @return SseParserInterface The SSE parser instance for parsing streaming responses.
+     */
+    protected function createSseParser(): SseParserInterface
+    {
+        return new OpenAiSseParser();
     }
 
     /**

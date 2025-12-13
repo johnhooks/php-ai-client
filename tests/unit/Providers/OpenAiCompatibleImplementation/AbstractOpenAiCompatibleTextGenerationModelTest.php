@@ -6,7 +6,6 @@ namespace WordPress\AiClient\Tests\unit\Providers\OpenAiCompatibleImplementation
 
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
-use RuntimeException;
 use WordPress\AiClient\Files\DTO\File;
 use WordPress\AiClient\Messages\DTO\Message;
 use WordPress\AiClient\Messages\DTO\MessagePart;
@@ -23,6 +22,7 @@ use WordPress\AiClient\Providers\Models\DTO\ModelConfig;
 use WordPress\AiClient\Providers\Models\DTO\ModelMetadata;
 use WordPress\AiClient\Results\DTO\Candidate;
 use WordPress\AiClient\Results\DTO\GenerativeAiResult;
+use WordPress\AiClient\Results\DTO\StreamingGenerativeAiResult;
 use WordPress\AiClient\Results\Enums\FinishReasonEnum;
 use WordPress\AiClient\Tools\DTO\FunctionCall;
 use WordPress\AiClient\Tools\DTO\FunctionDeclaration;
@@ -176,11 +176,28 @@ class AbstractOpenAiCompatibleTextGenerationModelTest extends TestCase
         $prompt = [new Message(MessageRoleEnum::user(), [new MessagePart('Hello')])];
         $model = $this->createModel();
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Streaming is not yet implemented.');
+        $this->mockRequestAuthentication
+            ->expects($this->once())
+            ->method('authenticateRequest')
+            ->willReturnArgument(0);
 
-        $generator = $model->streamGenerateTextResult($prompt);
-        $generator->current(); // Attempt to get the first value to trigger the exception.
+        $this->mockHttpTransporter
+            ->expects($this->once())
+            ->method('streamResponse')
+            ->willReturn((static function (): \Generator {
+                yield "data: {\"id\":\"resp_1\",\"model\":\"gpt-4\",\"choices\":[{\"index\":0,"
+                    . "\"delta\":{\"content\":\"Hi\"}}]}\n\n";
+                yield "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":"
+                    . "{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n";
+                yield "data: [DONE]\n\n";
+            })());
+
+        $results = iterator_to_array($model->streamGenerateTextResult($prompt));
+
+        $this->assertNotEmpty($results);
+        $this->assertInstanceOf(StreamingGenerativeAiResult::class, $results[0]);
+        $this->assertSame('Hi', $results[0]->getDelta());
+        $this->assertTrue($results[count($results) - 1]->isComplete());
     }
 
     /**

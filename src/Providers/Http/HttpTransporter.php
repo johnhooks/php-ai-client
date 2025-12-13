@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WordPress\AiClient\Providers\Http;
 
+use Generator;
 use Http\Discovery\Psr17FactoryDiscovery;
 use Http\Discovery\Psr18ClientDiscovery;
 use Psr\Http\Client\ClientInterface;
@@ -18,6 +19,7 @@ use WordPress\AiClient\Providers\Http\DTO\Request;
 use WordPress\AiClient\Providers\Http\DTO\RequestOptions;
 use WordPress\AiClient\Providers\Http\DTO\Response;
 use WordPress\AiClient\Providers\Http\Exception\NetworkException;
+use WordPress\AiClient\Providers\Http\Util\ResponseUtil;
 
 /**
  * HTTP transporter implementation using HTTPlug.
@@ -102,6 +104,51 @@ class HttpTransporter implements HttpTransporterInterface
         }
 
         return $this->convertFromPsr7Response($psr7Response);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @since n.e.x.t
+     */
+    public function streamResponse(Request $request, ?RequestOptions $options = null): Generator
+    {
+        $psr7Request = $this->convertToPsr7Request($request);
+        $mergedOptions = $this->mergeOptions($request->getOptions(), $options);
+
+        try {
+            $hasOptions = $mergedOptions !== null;
+            if ($hasOptions && $this->client instanceof ClientWithOptionsInterface) {
+                $psr7Response = $this->client->sendRequestWithOptions($psr7Request, $mergedOptions);
+                yield from $this->yieldStreamFromResponse($psr7Response);
+                return;
+            }
+
+            if ($hasOptions && $this->isGuzzleClient($this->client)) {
+                yield from $this->streamWithGuzzle($psr7Request, $mergedOptions);
+                return;
+            }
+
+            $response = $this->send($request, $options);
+            ResponseUtil::throwIfNotSuccessful($response);
+
+            $body = $response->getBody();
+            if ($body !== null) {
+                yield $body;
+            }
+        } catch (\Psr\Http\Client\NetworkExceptionInterface $e) {
+            throw NetworkException::fromPsr18NetworkException($psr7Request, $e);
+        } catch (\Psr\Http\Client\ClientExceptionInterface $e) {
+            throw new RuntimeException(
+                sprintf(
+                    'HTTP client error occurred while sending request to %s: %s',
+                    $request->getUri(),
+                    $e->getMessage()
+                ),
+                0,
+                $e
+            );
+        }
     }
 
     /**
@@ -232,6 +279,69 @@ class HttpTransporter implements HttpTransporterInterface
         $response = $callable($request, $guzzleOptions);
 
         return $response;
+    }
+
+    /**
+     * Streams a response using a Guzzle-compatible client.
+     *
+     * @since n.e.x.t
+     *
+     * @param RequestInterface $request The PSR-7 request to send.
+     * @param RequestOptions|null $options The request options.
+     * @return Generator<int, string, mixed, void> Generator yielding response chunks.
+     */
+    private function streamWithGuzzle(RequestInterface $request, ?RequestOptions $options): Generator
+    {
+        $guzzleOptions = $options !== null ? $this->buildGuzzleOptions($options) : [];
+        $guzzleOptions['stream'] = true;
+
+        /** @var callable $callable */
+        $callable = [$this->client, 'send'];
+
+        /** @var ResponseInterface $response */
+        $response = $callable($request, $guzzleOptions);
+
+        // Validate HTTP status before streaming.
+        $statusCode = $response->getStatusCode();
+        if ($statusCode >= 300) {
+            $convertedResponse = $this->convertFromPsr7Response($response);
+            ResponseUtil::throwIfNotSuccessful($convertedResponse);
+        }
+
+        $body = $response->getBody();
+
+        while (!$body->eof()) {
+            $chunk = $body->read(8192);
+            if ($chunk !== '') {
+                yield $chunk;
+            }
+        }
+    }
+
+    /**
+     * Streams the response body for clients supporting sendRequestWithOptions.
+     *
+     * @since n.e.x.t
+     *
+     * @param ResponseInterface $response The PSR-7 response.
+     * @return Generator<int, string, mixed, void> Generator yielding response chunks.
+     */
+    private function yieldStreamFromResponse(ResponseInterface $response): Generator
+    {
+        $statusCode = $response->getStatusCode();
+        if ($statusCode >= 300) {
+            $convertedResponse = $this->convertFromPsr7Response($response);
+            ResponseUtil::throwIfNotSuccessful($convertedResponse);
+        }
+
+        $body = $response->getBody();
+
+        while (!$body->eof()) {
+            $chunk = $body->read(8192);
+            if ($chunk !== '') {
+                yield $chunk;
+            }
+        }
     }
 
     /**
